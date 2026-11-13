@@ -158,10 +158,12 @@ function nav(){
 }
 
 function render(){
+  const navEl = document.getElementById("nav");
   if(!user) {
-    document.getElementById("nav").hidden = true;
+    if(navEl) navEl.hidden = true;
     return loginView();
   }
+  if(navEl) navEl.hidden = false;
   nav();
   if(user.role=="viewer"){
     viewerPage();
