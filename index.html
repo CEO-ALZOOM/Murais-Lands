@@ -158,7 +158,10 @@ function nav(){
 }
 
 function render(){
-  if(!user)return loginView();
+  if(!user) {
+    document.getElementById("nav").hidden = true;
+    return loginView();
+  }
   nav();
   if(user.role=="viewer"){
     viewerPage();
@@ -223,7 +226,7 @@ function oRates(){
   app.innerHTML=`
   <div class="card" style="margin-bottom: 15px;">
     <div class="pad">
-      <button class="btn full" style="background: var(--primary, #2563eb); color: #fff; font-weight: bold;" onclick="oAdmin()">⚙️ فتح لوحة التحكم الشاملة والألوان</button>
+      <button class="btn full" style="background: var(--g2); color: #fff; font-weight: bold;" onclick="oAdmin()">⚙️ فتح لوحة التحكم الشاملة والألوان</button>
     </div>
   </div>
   <div class="card"><div class="head">أسعار الصرف</div><div class="pad">
@@ -248,21 +251,30 @@ function getAllowedSales() {
   return S.sales;
 }
 
-// --- واجهة لوحة التحكم الشاملة للمالك ---
+// --- لوحة التحكم الشاملة الموسعة للمالك ---
 function oAdmin(){
   app.innerHTML = `
     <div class="card">
       <div class="head">لوحة التحكم الشاملة والتحكم بالنظام</div>
       <div class="pad">
-        <p class="mut">مرحباً بك يا صاحب الصلاحية المطلقة. من هنا يمكنك التحكم بكل تفاصيل النظام، البيانات، والألوان، وإدارة حسابات المراقبين.</p>
+        <p class="mut">مرحباً بك يا صاحب الصلاحية المطلقة. من هنا يمكنك التحكم بكل تفاصيل النظام، البيانات، كلمات مرور المستأجرين، وإدارة المراقبين.</p>
         
         <hr style="margin: 15px 0; border:0; border-top:1px solid #eee;">
         
-        <h3>إدارة المظهر والألوان</h3>
-        <label>لون الهوية الأساسي للتطبيق</label>
-        <div class="row">
-          <input type="color" id="appColor" value="${S.themeColor || '#2563eb'}" style="height:40px; padding:0; cursor:pointer;">
-          <button class="btn" onclick="saveThemeColor()">حفظ اللون</button>
+        <h3>إدارة كلمات مرور المستأجرين (موافقة المالك)</h3>
+        <p class="mut" style="font-size: 13px;">يمكنك تغيير كلمة المرور لأي مستأجر مباشرة من هنا دون السماح له بتغييرها بنفسه.</p>
+        <div class="scroll" style="margin-bottom: 15px;">
+          <table>
+            <tr><th>المستأجر</th><th>اليوزرنيم</th><th>كلمة المرور الحالية</th><th>إجراء</th></tr>
+            ${S.tenants.map(t => `
+              <tr>
+                <td><b>${esc(t.name)}</b></td>
+                <td>${esc(t.user)}</td>
+                <td><input type="text" id="pass_${t.id}" value="${esc(t.pass)}" style="width:110px; padding:6px;"></td>
+                <td><button class="btn sm" onclick="adminChangeTenantPass('${t.id}')">حفظ</button></td>
+              </tr>
+            `).join("")}
+          </table>
         </div>
 
         <hr style="margin: 15px 0; border:0; border-top:1px solid #eee;">
@@ -300,6 +312,15 @@ function oAdmin(){
 
         <hr style="margin: 15px 0; border:0; border-top:1px solid #eee;">
         
+        <h3>إدارة المظهر والألوان</h3>
+        <label>لون الهوية الأساسي للتطبيق</label>
+        <div class="row">
+          <input type="color" id="appColor" value="${S.themeColor || '#2a4a3a'}" style="height:40px; padding:0; cursor:pointer;">
+          <button class="btn" onclick="saveThemeColor()">حفظ اللون</button>
+        </div>
+
+        <hr style="margin: 15px 0; border:0; border-top:1px solid #eee;">
+        
         <h3>النسخ الاحتياطي وقاعدة البيانات</h3>
         <div class="row" style="margin-top:10px;">
           <button class="btn ghost full" onclick="exportDataBackup()">تصدير نسخة احتياطية (JSON)</button>
@@ -307,6 +328,20 @@ function oAdmin(){
       </div>
     </div>
   `;
+}
+
+function adminChangeTenantPass(id){
+  const newPass = document.getElementById(`pass_${id}`).value.trim();
+  if(!newPass || newPass.length < 3) {
+    alert("كلمة المرور قصيرة جداً.");
+    return;
+  }
+  const t = S.tenants.find(x => x.id == id);
+  if(t) {
+    t.pass = newPass;
+    save();
+    alert(`تم تحديث كلمة مرور المستأجر (${t.name}) بنجاح.`);
+  }
 }
 
 function addObserver(){
@@ -346,7 +381,6 @@ function saveThemeColor(){
   const color = document.getElementById("appColor").value;
   S.themeColor = color;
   save();
-  document.documentElement.style.setProperty('--primary', color);
   alert("تم تحديث لون النظام بنجاح.");
 }
 
@@ -581,12 +615,7 @@ function sendPay(){
 function tMe(){
   const t=T(user.id),c=calc(t),r=(l,v)=>`<small>${l}</small><b>${esc(v||"-")}</b>`;
   app.innerHTML=`<div class="card pad"><h3 style="margin-top:0">بياناتي</h3><div class="kv">${r("الاسم",t.name)}${r("اسم المستخدم",t.user)}${r("الأرض",t.land)}${r("رقم الهاتف",t.phone)}${r("اتفاق المالك",t.share+"% من المبيعات")}${r("بداية العقد",t.start)}${r("نهاية العقد",t.end)}${r("إجمالي المبيعات",fmt(c.sales)+" ريال")}${r("نصيب المالك",fmt(c.owed)+" ريال")}${r("المورّد المؤكد",fmt(c.paid)+" ريال")}</div>
-  <label>كلمة مرور جديدة</label><input id="np" type="password"><div class="err" id="err"></div><button class="btn full" onclick="chPass()">تغيير كلمة المرور</button></div>`;
-}
-function chPass(){
-  const v=document.getElementById("np").value;
-  if(v.length<4)return document.getElementById("err").textContent="كلمة المرور يجب أن تكون 4 أحرف على الأقل.";
-  T(user.id).pass=v;save();document.getElementById("err").textContent="تم تغيير كلمة المرور.";
+  <div class="alert" style="margin-top:15px; background:var(--sky); color:var(--ink);">🔒 تعديل كلمة المرور يتم حصرياً عبر التواصل مع المالك لتغييرها من لوحة التحكم الخاصة به.</div></div>`;
 }
 
 const LOGO='<svg width="42" height="32" viewBox="0 0 42 32"><polygon points="2,29 15,6 26,29" fill="#2a4a3a"/><polygon points="15,29 28,10 40,29" fill="#3f6e50"/><rect x="0" y="28" width="42" height="3" rx="1.5" fill="#7bab8a"/></svg>';
