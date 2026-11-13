@@ -51,48 +51,18 @@
     showStatus('checking', 'جارٍ فحص اتصال Supabase...');
 
     try {
-      const response = await fetch(SUPABASE_URL + '/rest/v1/', {
-        method: 'GET',
-        headers: {
-          apikey: SUPABASE_ANON_KEY,
-          Accept: 'application/openapi+json'
-        },
-        cache: 'no-store'
-      });
-
-      if (response.ok) {
-        showStatus(
-          'connected',
-          'اتصال Supabase API ناجح. لم يتم بعد ربط جداول النظام.'
-        );
-        return true;
-      }
-
-      if (response.status === 401 || response.status === 403) {
-        showStatus(
-          'error',
-          'تم الوصول إلى Supabase، لكن المفتاح أو صلاحية الوصول مرفوضة (' +
-            response.status + ').'
-        );
-      } else {
-        showStatus(
-          'error',
-          'تم الوصول إلى Supabase، لكن واجهة قاعدة البيانات أعادت الخطأ (' +
-            response.status + ').'
-        );
-      }
-      return false;
+      const { error } = await _supabase.auth.getSession();
+      if (error) throw error;
+      showStatus('connected', 'اتصال Supabase ناجح. لم يتم بعد ربط جداول النظام.');
+      return true;
     } catch (error) {
-      showStatus(
-        'error',
-        'تعذّر الوصول إلى Supabase. تحقق من الإنترنت وإعدادات المشروع.'
-      );
+      showStatus('error', 'تعذّر الوصول إلى Supabase: ' + (error.message || ''));
       console.error('Supabase connection check failed:', error);
       return false;
     }
   }
 </script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script> src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 :root{--bg:#f3f5f4;--card:#fff;--ink:#16221b;--mut:#6b7a72;--g:#2a4a3a;--g2:#3f6e50;--line:#dfe5e1;--sand:#faf0e1;--sandi:#d99a3a;--mint:#e6f1e9;--sky:#e7ecf8;--red:#f7e1df;--redi:#a8321f;--in:#f3f5f4}
 @media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#121a16;--card:#1b2620;--ink:#e8efe9;--mut:#9aaaa1;--g:#173226;--g2:#5fa079;--line:#2c3a33;--sand:#33291a;--mint:#1f3328;--sky:#1e2638;--red:#3a1f1c;--redi:#ff9b8a;--in:#232f28}}
