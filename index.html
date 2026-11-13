@@ -6,12 +6,10 @@
 <title>نظام الأراضي الزراعية</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
-  // إعداد اتصال Supabase. المفتاح Publishable مخصص للاستخدام في المتصفح،
-  // لكن حماية البيانات تعتمد على إعداد سياسات RLS داخل Supabase.
   const SUPABASE_URL = 'https://mxjczdyelwxqapsnlyyr.supabase.co';
   const SUPABASE_ANON_KEY = 'sb_publishable_VKBe5P1JLHXYMWD7_p6n-w_fabVv80X';
   let _supabase = null;
-  let SUPABASE_CONNECTION = { state: 'checking', message: 'جارٍ فحص اتصال Supabase...' };
+  let SUPABASE_CONNECTION = { state: 'checking', message: 'جارٍ الاتصال بقاعدة البيانات...' };
 
   try {
     if (!window.supabase || typeof window.supabase.createClient !== 'function') {
@@ -19,46 +17,16 @@
     }
     _supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   } catch (e) {
-    SUPABASE_CONNECTION = {
-      state: 'error',
-      message: e.message || 'تعذّر تهيئة Supabase'
-    };
-    console.error('Supabase initialization failed:', e);
+    SUPABASE_CONNECTION = { state: 'error', message: e.message || 'تعذّر تهيئة Supabase' };
   }
 
-  // فحص واجهة Supabase فقط؛ لا يقرأ أو يغيّر أي جدول أو بيانات.
-  async function checkSupabaseConnection() {
-    const statusElement = document.getElementById('supabaseStatus');
-
-    const showStatus = (state, message) => {
-      SUPABASE_CONNECTION = { state, message };
-      if (statusElement) {
-        statusElement.textContent = message;
-        statusElement.style.background =
-          state === 'connected' ? 'var(--mint)' :
-          state === 'checking' ? 'var(--sky)' : 'var(--red)';
-        statusElement.style.color =
-          state === 'connected' ? 'var(--g2)' :
-          state === 'checking' ? 'var(--ink)' : 'var(--redi)';
-      }
-    };
-
-    if (!_supabase) {
-      showStatus('error', SUPABASE_CONNECTION.message || 'تعذّر تهيئة اتصال Supabase.');
-      return false;
-    }
-
-    showStatus('checking', 'جارٍ فحص اتصال Supabase...');
-
-    try {
-      const { error } = await _supabase.auth.getSession();
-      if (error) throw error;
-      showStatus('connected', 'اتصال Supabase ناجح. لم يتم بعد ربط جداول النظام.');
-      return true;
-    } catch (error) {
-      showStatus('error', 'تعذّر الوصول إلى Supabase: ' + (error.message || ''));
-      console.error('Supabase connection check failed:', error);
-      return false;
+  function updateStatusBanner(state, message) {
+    SUPABASE_CONNECTION = { state, message };
+    const el = document.getElementById('supabaseStatus');
+    if (el) {
+      el.textContent = message;
+      el.style.background = state === 'connected' ? 'var(--mint)' : state === 'checking' ? 'var(--sky)' : 'var(--red)';
+      el.style.color = state === 'connected' ? 'var(--g2)' : state === 'checking' ? 'var(--ink)' : 'var(--redi)';
     }
   }
 </script>
@@ -147,24 +115,87 @@ function seed(){
    {id:uid(),tid:"t1",amount:93750,date:d(-5),note:"دفعة أولى",st:"c"},
    {id:uid(),tid:"t3",amount:50000,date:d(-1),note:"تحويل بنكي",st:"p"}],
   wallets:[{id:uid(),name:"المحفظة الأولى",holder:"اسم صاحب المحفظة",phone:"7xx xxx xxx"},{id:uid(),name:"المحفظة الثانية",holder:"اسم صاحب المحفظة",phone:"7xx xxx xxx"}],
+  observers:[],
   admin:{user:"admin",pass:"admin123",name:"المالك"}};
 }
-let S,user=null,page="home",EW=null,LF=null,LM="";
-function load(){
-  try{S=JSON.parse(localStorage.getItem(KEY))}catch(e){}
-  if(!S||!S.tenants)S=seed();
-  if(!S.wallets)S.wallets=seed().wallets;
-  S.tenants.forEach(t=>{if(!t.share)t.share=25});
-  S.sales.forEach(x=>{if(x.amount==null){x.amount=(x.qty||0)*(x.price||0);x.qty=x.qty?x.qty+" "+(x.unit||""):""}});
+
+let S=seed(),user=null,page="home",EW=null,LF=null,LM="";
+
+/* ---------- المزامنة السحابية مع جداول Supabase ---------- */
+async function load(){
+  // 1. قراءة محلية مبدئية لسرعة الفتح
+  try{const local=JSON.parse(localStorage.getItem(KEY));if(local&&local.tenants)S=local;}catch(e){}
+  
+  // 2. الجلب الحي من جداول Supabase
+  if(_supabase){
+    updateStatusBanner('checking', 'جارٍ مزامنة البيانات من Supabase...');
+    try{
+      const [resSet, resTen, resSal, resPay] = await Promise.all([
+        _supabase.from('app_settings').select('*').eq('id', 'default').maybeSingle(),
+        _supabase.from('tenants').select('*'),
+        _supabase.from('sales').select('*'),
+        _supabase.from('payments').select('*')
+      ]);
+
+      if(resSet.error) throw resSet.error;
+
+      // إذا كانت الجداول فارغة أول مرة، نرفع البيانات التجريبية إليها تلقائياً
+      if(resTen.data && resTen.data.length === 0 && S.tenants.length > 0){
+        await syncSeedToCloud();
+      } else {
+        if(resSet.data){
+          S.rates = resSet.data.rates || S.rates;
+          S.wa = resSet.data.wa || '';
+          S.themeColor = resSet.data.theme_color || '#2a4a3a';
+          S.wallets = resSet.data.wallets || [];
+          S.observers = resSet.data.observers || [];
+          S.admin = resSet.data.admin || S.admin;
+        }
+        if(resTen.data) S.tenants = resTen.data.map(t=>({...t, start: t.start_date, end: t.end_date}));
+        if(resSal.data) S.sales = resSal.data;
+        if(resPay.data) S.payments = resPay.data;
+      }
+      localStorage.setItem(KEY, JSON.stringify(S));
+      updateStatusBanner('connected', 'متصل سحابياً بـ Supabase ومزامن بنجاح ✓');
+    }catch(err){
+      console.error('Supabase Load Error:', err);
+      updateStatusBanner('error', 'وضع غير متصل: تأكد من تشغيل كود SQL لإنشاء الجداول في Supabase.');
+    }
+  }
   applyTheme();
 }
-function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
+
+async function syncSeedToCloud(){
+  if(!_supabase) return;
+  await _supabase.from('app_settings').upsert({
+    id: 'default', rates: S.rates, wa: S.wa||'', theme_color: S.themeColor||'#2a4a3a',
+    wallets: S.wallets, observers: S.observers||[], admin: S.admin
+  });
+  if(S.tenants.length) await _supabase.from('tenants').upsert(S.tenants.map(t=>({
+    id:t.id, name:t.name, user:t.user, pass:t.pass, land:t.land, phone:t.phone||'',
+    share:t.share||25, start_date:t.start||'', end_date:t.end||'', on:t.on??1
+  })));
+  if(S.sales.length) await _supabase.from('sales').upsert(S.sales);
+  if(S.payments.length) await _supabase.from('payments').upsert(S.payments);
+}
+
+async function saveSettingsCloud(){
+  localStorage.setItem(KEY, JSON.stringify(S));
+  if(!_supabase) return;
+  await _supabase.from('app_settings').upsert({
+    id: 'default', rates: S.rates, wa: S.wa||'', theme_color: S.themeColor||'#2a4a3a',
+    wallets: S.wallets, observers: S.observers||[], admin: S.admin
+  });
+}
+
+function saveLocal(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
 function applyTheme(){if(S&&S.themeColor)document.documentElement.style.setProperty("--g",S.themeColor)}
+
 function calc(t){
-  const sales=S.sales.filter(x=>x.tid==t.id).reduce((a,x)=>a+x.amount,0);
-  const owed=sales*t.share/100;
-  const paid=S.payments.filter(x=>x.tid==t.id&&x.st=="c").reduce((a,x)=>a+x.amount,0);
-  const pend=S.payments.filter(x=>x.tid==t.id&&x.st=="p").reduce((a,x)=>a+x.amount,0);
+  const sales=S.sales.filter(x=>x.tid==t.id).reduce((a,x)=>a+Number(x.amount||0),0);
+  const owed=sales*Number(t.share||25)/100;
+  const paid=S.payments.filter(x=>x.tid==t.id&&x.st=="c").reduce((a,x)=>a+Number(x.amount||0),0);
+  const pend=S.payments.filter(x=>x.tid==t.id&&x.st=="p").reduce((a,x)=>a+Number(x.amount||0),0);
   return{sales,owed,paid,pend,left:Math.max(0,owed-paid)};
 }
 const T=id=>S.tenants.find(t=>t.id==id)||{name:"محذوف"};
@@ -176,7 +207,7 @@ const who=()=>user.role=="owner"?"المالك":user.role=="viewer"?user.usernam
 function loginView(){
   app.innerHTML=`<div class="card login"><svg viewBox="0 0 400 130" preserveAspectRatio="none" style="display:block;width:100%;height:130px"><defs><linearGradient id="sk" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#dde5e7"/><stop offset="1" stop-color="#eef1f0"/></linearGradient></defs><rect width="400" height="130" fill="url(#sk)"/><polygon fill="#a5b3a8" points="0,130 0,80 55,40 110,75 170,20 260,70 330,38 400,80 400,130"/><polygon fill="#778f7c" points="0,130 0,100 70,75 150,108 280,60 400,105 400,130"/><polygon fill="#506a56" points="0,130 0,120 90,108 220,124 400,112 400,130"/></svg>
   <div class="pad"><div class="brand" style="margin-bottom:6px">${LOGO}<div><b>مريس</b><small>إدارة الأراضي الزراعية</small></div></div>
-  <div id="supabaseStatus" class="alert" style="background:var(--sky);color:var(--ink)">جارٍ فحص اتصال Supabase...</div>
+  <div id="supabaseStatus" class="alert" style="background:var(--sky);color:var(--ink)">${esc(SUPABASE_CONNECTION.message)}</div>
   <h2 style="margin-bottom:6px">تسجيل الدخول</h2><p class="mut" style="margin-top:0">الحسابات يصدرها المالك فقط. إن لم يكن لديك حساب، تواصل مع المالك.</p>
   <label>اسم المستخدم</label><input id="u" autocomplete="username" autocapitalize="none">
   <label>كلمة المرور</label><input id="p" type="password" autocomplete="current-password">
@@ -186,6 +217,7 @@ function loginView(){
   <button class="btn sm ghost" onclick="fill('admin','admin123')">المالك (admin)</button>
   <button class="btn sm ghost" onclick="fill('ahmed','1234')">المستأجر أحمد (ahmed)</button>
   <button class="btn sm ghost" onclick="fill('salem','1234')">المستأجر سالم (salem)</button></div></div></div>`;
+  updateStatusBanner(SUPABASE_CONNECTION.state, SUPABASE_CONNECTION.message);
 }
 function fill(u,p){document.getElementById("u").value=u;document.getElementById("p").value=p}
 function doLogin(){
@@ -206,7 +238,7 @@ function logout(){
   user=null;closeM();
   const n=document.getElementById("nav");n.innerHTML="";n.hidden=true;
   render();
-  checkSupabaseConnection();
+  load().then(()=>{if(!user)loginView();});
   window.scrollTo(0,0);
 }
 function go(p){EW=null;page=p;render();window.scrollTo(0,0)}
@@ -241,7 +273,7 @@ function getAllowedSales(){
   return S.sales;
 }
 function viewerPage(){
-  const rows=getAllowedSales(),total=rows.reduce((s,x)=>s+(x.amount||0),0),lbl=user.cropFilter||"كل المحاصيل";
+  const rows=getAllowedSales(),total=rows.reduce((s,x)=>s+Number(x.amount||0),0),lbl=user.cropFilter||"كل المحاصيل";
   app.innerHTML=`
   <div class="card hero"><div class="ico">👁️</div><div><h2>لوحة مراقبة ${esc(lbl)}</h2><p>صلاحية قراءة ومراقبة فقط</p></div></div>
   <div class="card"><div class="head">إجمالي مبيعات ${esc(lbl)}</div><div class="pad"><h3 style="margin-top:0">${fmt(total)} ريال</h3>
@@ -282,12 +314,12 @@ function oRates(){
   <div class="card"><div class="head">رقم واتساب المالك</div><div class="pad"><p class="mut" style="margin-top:0">يستقبل عليه المستأجرون السندات والرسائل. اكتبه بالصيغة الدولية بدون +، مثل 967700000000.</p><input id="wa" inputmode="tel" value="${esc(S.wa||"")}"><button class="btn full" onclick="saveWA()">حفظ الرقم</button><div class="mut" style="margin-top:10px" id="wok"></div></div></div>
   <div class="card"><div class="head">محافظ استلام المدفوعات</div><div class="pad"><p class="mut" style="margin-top:0">المستأجرون يحوّلون المستحقات إلى هذه المحافظ.</p>${S.wallets.map(w=>`<div class="wal"><b>${esc(w.name)}</b><div class="mut">${esc(w.holder)} - ${esc(w.phone)}</div><button class="btn sm ghost" onclick="editWallet('${w.id}')">تعديل</button> <button class="btn sm red" onclick="delWallet('${w.id}')">حذف</button></div>`).join("")||'<div class="empty">لا توجد محافظ بعد. أضف أول محفظة من النموذج التالي.</div>'}<label>اسم المحفظة</label><input id="wn" placeholder="مثلاً: المحفظة الأولى"><div class="row"><div><label>اسم صاحب المحفظة</label><input id="wh"></div><div><label>رقم المحفظة</label><input id="wp" inputmode="tel"></div></div><div class="err" id="wer"></div><button class="btn full" id="wb" onclick="addWallet()">إضافة المحفظة</button></div></div>`;
 }
-function saveRates(){
+async function saveRates(){
   const u=+document.getElementById("usd").value,s=+document.getElementById("sar").value;
   if(!(u>0&&s>0))return document.getElementById("ok").textContent="أدخل سعرين أكبر من صفر.";
-  S.rates={usd:u,sar:s};save();document.getElementById("ok").textContent="تم حفظ الأسعار.";
+  S.rates={usd:u,sar:s};await saveSettingsCloud();document.getElementById("ok").textContent="تم حفظ الأسعار سحابياً ✓";
 }
-function saveWA(){S.wa=document.getElementById("wa").value.trim();save();document.getElementById("wok").textContent="تم حفظ الرقم."}
+async function saveWA(){S.wa=document.getElementById("wa").value.trim();await saveSettingsCloud();document.getElementById("wok").textContent="تم حفظ الرقم سحابياً ✓"}
 
 /* ---------- لوحة التحكم الشاملة ---------- */
 function oAdmin(){
@@ -308,30 +340,32 @@ function oAdmin(){
     <div class="err" id="oerr"></div><button class="btn full" onclick="addObserver()">إضافة حساب المراقب</button>
     <h3>لون الهوية</h3>
     <div class="row"><input type="color" id="appColor" value="${S.themeColor||'#2a4a3a'}" style="height:44px;padding:2px"><button class="btn" onclick="saveThemeColor()">حفظ اللون</button></div>
-    <h3>النسخ الاحتياطي</h3>
+    <h3>النسخ الاحتياطي والمزامنة</h3>
     <button class="btn ghost full" onclick="exportDataBackup()">تصدير نسخة احتياطية (JSON)</button>
   </div></div>`;
 }
-function adminChangeTenantPass(id){
+async function adminChangeTenantPass(id){
   const v=document.getElementById("pass_"+id).value.trim(),t=S.tenants.find(x=>x.id==id);
   if(!t)return;
   if(v.length<3)return modal('<p>كلمة المرور قصيرة جداً.</p>');
-  t.pass=v;save();modal(`<p>تم تحديث كلمة مرور ${esc(t.name)}.</p>`);
+  t.pass=v;saveLocal();
+  if(_supabase) await _supabase.from('tenants').update({pass: v}).eq('id', id);
+  modal(`<p>تم تحديث كلمة مرور ${esc(t.name)} سحابياً ✓</p>`);
 }
-function addObserver(){
+async function addObserver(){
   const u=document.getElementById("obsUser").value.trim(),p=document.getElementById("obsPass").value.trim(),c=document.getElementById("obsCrop").value,e=document.getElementById("oerr");
   if(!u||!p)return e.textContent="أدخل اسم المستخدم وكلمة المرور.";
   const lu=u.toLowerCase();
   if(lu==S.admin.user||S.tenants.some(t=>t.user==lu)||(S.observers||[]).some(o=>o.username.toLowerCase()==lu))return e.textContent="اسم المستخدم مستخدم من قبل.";
   if(!S.observers)S.observers=[];
   S.observers.push({id:uid(),username:u,pass:p,role:"viewer",cropFilter:c=="all"?"":c});
-  save();oAdmin();
+  await saveSettingsCloud();oAdmin();
 }
 function delObserver(id){
   modal(`<h3 style="margin-top:0">حذف حساب المراقب؟</h3><button class="btn full red" onclick="doDelObs('${id}')">نعم، احذف</button>`);
 }
-function doDelObs(id){S.observers=(S.observers||[]).filter(o=>o.id!=id);save();closeM();oAdmin()}
-function saveThemeColor(){S.themeColor=document.getElementById("appColor").value;save();applyTheme();modal("<p>تم تحديث لون النظام.</p>")}
+async function doDelObs(id){S.observers=(S.observers||[]).filter(o=>o.id!=id);await saveSettingsCloud();closeM();oAdmin()}
+async function saveThemeColor(){S.themeColor=document.getElementById("appColor").value;await saveSettingsCloud();applyTheme();modal("<p>تم تحديث لون النظام سحابياً ✓</p>")}
 function exportDataBackup(){
   const a=document.createElement("a");
   a.href="data:text/json;charset=utf-8,"+encodeURIComponent(JSON.stringify(S));
@@ -340,19 +374,19 @@ function exportDataBackup(){
 }
 
 /* ---------- المحافظ ---------- */
-function addWallet(){
+async function addWallet(){
   const v=id=>document.getElementById(id).value.trim();
   if(!v("wn")||!v("wp"))return document.getElementById("wer").textContent="أدخل اسم المحفظة ورقمها.";
   if(EW){const w=S.wallets.find(x=>x.id==EW);if(w){w.name=v("wn");w.holder=v("wh");w.phone=v("wp")}EW=null}
   else S.wallets.push({id:uid(),name:v("wn"),holder:v("wh"),phone:v("wp")});
-  save();render();
+  await saveSettingsCloud();render();
 }
 function editWallet(id){
   const w=S.wallets.find(x=>x.id==id);if(!w)return;EW=id;
   const s=(k,v)=>document.getElementById(k).value=v;s("wn",w.name);s("wh",w.holder);s("wp",w.phone);
   document.getElementById("wb").textContent="حفظ التعديل";document.getElementById("wn").scrollIntoView({block:"center"});document.getElementById("wn").focus();
 }
-function delWallet(id){S.wallets=S.wallets.filter(w=>w.id!=id);save();render()}
+async function delWallet(id){S.wallets=S.wallets.filter(w=>w.id!=id);await saveSettingsCloud();render()}
 function showImg(id){
   const x=S.payments.find(p=>p.id==id);if(!x||!x.img)return;
   const o=document.createElement("div");o.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:40;display:grid;place-items:center;padding:16px";
@@ -370,25 +404,47 @@ function oTenants(){
   <div class="row"><div><label>بداية العقد</label><input id="ts" type="date" value="${today()}"></div><div><label>نهاية العقد</label><input id="te" type="date"></div></div>
   <div class="err" id="err"></div><button class="btn full" onclick="addTenant()">إضافة المستأجر</button></div></div>`;
 }
-function addTenant(){
+async function addTenant(){
   const v=id=>document.getElementById(id).value.trim(),e=document.getElementById("err");
   if(!v("n")||!v("l")||!v("u")||!v("p"))return e.textContent="أكمل الاسم والأرض واسم المستخدم وكلمة المرور.";
   const lu=v("u").toLowerCase();
   if(S.tenants.some(t=>t.user==lu)||lu==S.admin.user||(S.observers||[]).some(o=>o.username.toLowerCase()==lu))return e.textContent="اسم المستخدم مستخدم من قبل، اختر اسماً آخر.";
-  S.tenants.push({id:uid(),name:v("n"),land:v("l"),user:lu,pass:v("p"),phone:v("ph"),share:+v("s")||25,start:v("ts"),end:v("te"),on:1});
-  save();render();
+  const newT = {id:uid(),name:v("n"),land:v("l"),user:lu,pass:v("p"),phone:v("ph"),share:+v("s")||25,start:v("ts"),end:v("te"),on:1};
+  S.tenants.push(newT);saveLocal();
+  if(_supabase) await _supabase.from('tenants').insert({
+    id:newT.id, name:newT.name, land:newT.land, user:newT.user, pass:newT.pass,
+    phone:newT.phone, share:newT.share, start_date:newT.start, end_date:newT.end, on:1
+  });
+  render();
 }
 function delTenant(id){modal(`<h3 style="margin-top:0">حذف المستأجر؟</h3><p class="mut">سيُحذف مع كل مبيعاته ومدفوعاته.</p><button class="btn full red" onclick="doDel('${id}')">نعم، احذف</button>`)}
-function doDel(id){S.tenants=S.tenants.filter(t=>t.id!=id);S.sales=S.sales.filter(x=>x.tid!=id);S.payments=S.payments.filter(x=>x.tid!=id);save();closeM();render()}
-function setShare(id,v){const t=S.tenants.find(x=>x.id==id);if(t&&+v>=0){t.share=+v;save()}}
+async function doDel(id){
+  S.tenants=S.tenants.filter(t=>t.id!=id);
+  S.sales=S.sales.filter(x=>x.tid!=id);
+  S.payments=S.payments.filter(x=>x.tid!=id);
+  saveLocal();
+  if(_supabase){
+    await _supabase.from('tenants').delete().eq('id', id);
+    await _supabase.from('sales').delete().eq('tid', id);
+    await _supabase.from('payments').delete().eq('tid', id);
+  }
+  closeM();render();
+}
+async function setShare(id,v){
+  const t=S.tenants.find(x=>x.id==id);
+  if(t&&+v>=0){
+    t.share=+v;saveLocal();
+    if(_supabase) await _supabase.from('tenants').update({share: +v}).eq('id', id);
+  }
+}
 
 /* ---------- المبيعات ---------- */
 function sStat(){
   const m={};
   S.tenants.forEach(t=>{
-    let r=S.payments.filter(p=>p.tid==t.id&&p.st!="r"&&p.img).reduce((a,p)=>a+p.amount,0);
+    let r=S.payments.filter(p=>p.tid==t.id&&p.st!="r"&&p.img).reduce((a,p)=>a+Number(p.amount||0),0);
     S.sales.filter(x=>x.tid==t.id).sort((a,b)=>a.date.localeCompare(b.date)).forEach(x=>{
-      const s=x.amount*(t.share||0)/100;
+      const s=Number(x.amount||0)*(t.share||0)/100;
       if(r>=s-.5){m[x.id]="y";r-=s}else if(r>0){m[x.id]="h";r=0}else m[x.id]="n";
     });
   });
@@ -408,10 +464,12 @@ function editSale(id){
   <label>قيمة البيع (ريال يمني)</label><input id="ea" type="number" value="${x.amount}"><div class="err" id="eer"></div>
   <button class="btn full" onclick="saveSale('${id}')">حفظ التعديل</button>`);
 }
-function saveSale(id){
+async function saveSale(id){
   const x=S.sales.find(s=>s.id==id),g=k=>document.getElementById(k).value,a=+g("ea");
   if(!x)return;if(!(a>0))return document.getElementById("eer").textContent="أدخل قيمة البيع برقم أكبر من صفر.";
-  x.crop=g("ec");x.date=g("ed")||x.date;x.qty=g("eq").trim();x.amount=a;save();closeM();render();
+  x.crop=g("ec");x.date=g("ed")||x.date;x.qty=g("eq").trim();x.amount=a;saveLocal();
+  if(_supabase) await _supabase.from('sales').update({crop:x.crop, date:x.date, qty:x.qty, amount:x.amount}).eq('id', id);
+  closeM();render();
 }
 
 /* ---------- المدفوعات ---------- */
@@ -420,14 +478,19 @@ function oPay(){
   app.innerHTML=`<div class="card"><div class="pad top"><h3>المدفوعات</h3></div><div class="scroll"><table><tr><th>التاريخ</th><th>المستأجر</th><th>المبلغ</th><th>الحالة</th><th></th></tr>
   ${rows.map(x=>`<tr><td>${x.date}</td><td>${esc(T(x.tid).name)}<div class="mut">${esc(x.wallet||"")} ${x.ref?"- رقم "+esc(x.ref):""} ${esc(x.note||"")}</div>${x.img?`<button class="btn sm ghost" onclick="showImg('${x.id}')">عرض السند</button>`:""}</td><td>${fmt(x.amount)}</td><td>${badge(x.st)}</td><td>${x.st=="p"?`<button class="btn sm" onclick="setPay('${x.id}','c')">تأكيد</button> <button class="btn sm red" onclick="setPay('${x.id}','r')">رفض</button>`:""}</td></tr>`).join("")||`<tr><td colspan="5" class="empty">لا توجد دفعات بعد.</td></tr>`}</table></div></div>`;
 }
-function setPay(id,st){const p=S.payments.find(x=>x.id==id);if(!p)return;p.st=st;save();render()}
+async function setPay(id,st){
+  const p=S.payments.find(x=>x.id==id);if(!p)return;
+  p.st=st;saveLocal();
+  if(_supabase) await _supabase.from('payments').update({st: st}).eq('id', id);
+  render();
+}
 
 /* ---------- التقارير ---------- */
 function oRep(){
   const sm=sStat(),M={},C={};
   const mo=k=>M[k]=M[k]||{s:0,sh:0,c:0};
-  S.sales.forEach(x=>{const m=mo(ym(x.date));m.s+=x.amount;m.sh+=x.amount*(T(x.tid).share||0)/100;C[x.crop]=(C[x.crop]||0)+x.amount});
-  S.payments.filter(p=>p.st=="c").forEach(p=>{mo(ym(p.date)).c+=p.amount});
+  S.sales.forEach(x=>{const m=mo(ym(x.date));m.s+=Number(x.amount);m.sh+=Number(x.amount)*(T(x.tid).share||0)/100;C[x.crop]=(C[x.crop]||0)+Number(x.amount)});
+  S.payments.filter(p=>p.st=="c").forEach(p=>{mo(ym(p.date)).c+=Number(p.amount)});
   const late=S.tenants.map(t=>{const c=calc(t),old=S.sales.filter(x=>x.tid==t.id&&sm[x.id]!="y").sort((a,b)=>a.date.localeCompare(b.date))[0];
     return{t,amt:Math.max(0,c.owed-c.paid-c.pend),days:old?Math.floor((Date.now()-new Date(old.date))/864e5):0}}).filter(r=>r.amt>0&&r.days>=7);
   const first=today().slice(0,8)+"01";
@@ -453,12 +516,12 @@ function exportXls(){
   const ts=S.tenants.filter(x=>!tid||x.id==tid),ids=ts.map(x=>x.id),inR=d=>d>=f&&d<=t,sm=sStat();
   const sl=S.sales.filter(x=>ids.includes(x.tid)&&inR(x.date)).sort((a,b)=>a.date.localeCompare(b.date));
   const pm=S.payments.filter(p=>ids.includes(p.tid)&&inR(p.date)&&p.st=="c");
-  const shr=x=>x.amount*T(x.tid).share/100;
-  const S1=sum(sl,x=>x.amount),H1=sum(sl,shr),C1=sum(pm,p=>p.amount);
-  const S2=sum(sl,x=>usd(x,x.amount)),H2=sum(sl,x=>usd(x,shr(x))),C2=sum(pm,p=>usd(p,p.amount));
-  const S3=sum(sl,x=>sar(x,x.amount)),H3=sum(sl,x=>sar(x,shr(x))),C3=sum(pm,p=>sar(p,p.amount));
+  const shr=x=>Number(x.amount)*T(x.tid).share/100;
+  const S1=sum(sl,x=>Number(x.amount)),H1=sum(sl,shr),C1=sum(pm,p=>Number(p.amount));
+  const S2=sum(sl,x=>usd(x,Number(x.amount))),H2=sum(sl,x=>usd(x,shr(x))),C2=sum(pm,p=>usd(p,Number(p.amount)));
+  const S3=sum(sl,x=>sar(x,Number(x.amount))),H3=sum(sl,x=>sar(x,shr(x))),C3=sum(pm,p=>sar(p,Number(p.amount)));
   const A=[["المستأجر","الأرض","النسبة %","المبيعات","نصيبك","المحصّل","المتبقي"]];
-  ts.forEach(x=>{const s=sum(sl.filter(y=>y.tid==x.id),y=>y.amount),c=sum(pm.filter(p=>p.tid==x.id),p=>p.amount),sh=sum(sl.filter(y=>y.tid==x.id),shr);A.push([x.name,x.land,x.share,s,sh,c,r2(sh-c)])});
+  ts.forEach(x=>{const s=sum(sl.filter(y=>y.tid==x.id),y=>Number(y.amount)),c=sum(pm.filter(p=>p.tid==x.id),p=>Number(p.amount)),sh=sum(sl.filter(y=>y.tid==x.id),shr);A.push([x.name,x.land,x.share,s,sh,c,r2(sh-c)])});
   A.push(["الإجمالي","","",S1,H1,C1,r2(H1-C1)],[],
     ["الإجمالي بالعملات","المبيعات","نصيبك","المحصّل","المتبقي"],
     ["ريال يمني",S1,H1,C1,r2(H1-C1)],["دولار",S2,H2,C2,r2(H2-C2)],["ريال سعودي",S3,H3,C3,r2(H3-C3)],
@@ -497,11 +560,13 @@ function pre(){
   const tot=+document.getElementById("pr").value||0,t=T(user.id);
   document.getElementById("pv").innerHTML=`إجمالي البيع <b>${fmt(tot)}</b> ريال<br>نسبة المالك (${t.share}%): <b>${fmt(tot*t.share/100)}</b> ريال`;
 }
-function addSale(){
+async function addSale(){
   const g=id=>document.getElementById(id).value,p=+g("pr");
   if(!(p>0))return document.getElementById("err").textContent="أدخل قيمة البيع برقم أكبر من صفر.";
-  S.sales.push({id:uid(),tid:user.id,crop:g("c"),date:g("d")||today(),qty:g("q").trim(),amount:p,rate:{...S.rates}});
-  save();render();document.getElementById("pcard").scrollIntoView();
+  const newSale = {id:uid(),tid:user.id,crop:g("c"),date:g("d")||today(),qty:g("q").trim(),amount:p,rate:{...S.rates}};
+  S.sales.push(newSale);saveLocal();
+  if(_supabase) await _supabase.from('sales').insert(newSale);
+  render();document.getElementById("pcard").scrollIntoView();
 }
 function tHist(){
   const id=user.id,sales=S.sales.filter(x=>x.tid==id).sort((a,b)=>b.date.localeCompare(a.date)),pays=S.payments.filter(x=>x.tid==id).sort((a,b)=>b.date.localeCompare(a.date));
@@ -536,7 +601,12 @@ function sendPay(){
   if(!(a>0))return e.textContent="أدخل المبلغ المحوّل.";
   if(!w)return e.textContent="لا توجد محفظة للتحويل إليها. تواصل مع المالك.";
   if(!f)return e.textContent="أرفق صورة السند أولاً. لا يمكن إضافة التوريد بدونها.";
-  const done=img=>{const p={id:uid(),tid:user.id,amount:a,date:today(),wallet:w.name,ref,img:img||"",note:"",st:"p",rate:{...S.rates}};S.payments.push(p);save();LF=f;go("hist");waAfter(p)};
+  const done=async img=>{
+    const p={id:uid(),tid:user.id,amount:a,date:today(),wallet:w.name,ref,img:img||"",note:"",st:"p",rate:{...S.rates}};
+    S.payments.push(p);saveLocal();
+    if(_supabase) await _supabase.from('payments').insert(p);
+    LF=f;go("hist");waAfter(p);
+  };
   shrink(f,done,()=>{e.textContent="تعذّر قراءة الصورة، جرّب صورة أخرى."});
 }
 function tMe(){
@@ -568,7 +638,8 @@ function modal(h){
 }
 function closeM(){const o=document.getElementById("md");if(o)o.remove()}
 
-load();render();checkSupabaseConnection();
+render();
+load().then(()=>{if(!user)render();});
 </script>
 </body>
 </html>
