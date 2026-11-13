@@ -74,6 +74,27 @@ nav button.wa{background:rgba(255,255,255,.12);color:#fff;flex:none;padding:7px 
 </style>
 </head>
 <body>
+    <!-- زر اختبار الاتصال والحفظ في Supabase -->
+  <div style="text-align: center; padding: 10px;">
+    <button onclick="testConnection()" style="padding: 12px 24px; font-size: 16px; background-color: #22c55e; color: white; border: none; border-radius: 8px; cursor: pointer;">اختبار الحفظ في Supabase</button>
+  </div>
+
+  <script>
+    async function testConnection() {
+      const { data, error } = await _supabase
+        .from('lands')
+        .insert([{ title: 'أرض تجريبية من الجوال', price: 500000 }]);
+
+      if (error) {
+        console.error('خطأ في الاتصال:', error);
+        alert('فشل الاتصال أو الحفظ: ' + error.message);
+      } else {
+        console.log('تم الحفظ بنجاح:', data);
+        alert('تم الاتصال والحفظ في قاعدة البيانات بنجاح تام! 🎉');
+      }
+    }
+  </script>
+
 <main id="app"></main>
 <nav id="nav" hidden></nav>
 <script>
