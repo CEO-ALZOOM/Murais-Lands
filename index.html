@@ -156,10 +156,18 @@ function fill(u,p){document.getElementById("u").value=u;document.getElementById(
 function doLogin(){
   const u=document.getElementById("u").value.trim().toLowerCase(),p=document.getElementById("p").value;
   if(u==S.admin.user&&p==S.admin.pass)user={role:"owner"};
-  else{const t=S.tenants.find(t=>t.user==u&&t.pass==p&&t.on);if(t)user={role:"tenant",id:t.id}}
+  else{
+    const t=S.tenants.find(t=>t.user==u&&t.pass==p&&t.on);
+    if(t)user={role:"tenant",id:t.id};
+    else{
+      const obs=(S.observers||[]).find(o=>o.username.toLowerCase()==u&&o.pass==p);
+      if(obs)user={role:"viewer",id:obs.id,username:obs.username,cropFilter:obs.cropFilter};
+    }
+  }
   if(!user){document.getElementById("err").textContent="اسم المستخدم أو كلمة المرور غير صحيحة.";return}
   page="home";render();
 }
+
 function logout(){user=null;render()}
 function go(p){EW=null;page=p;render();window.scrollTo(0,0)}
 
@@ -170,12 +178,92 @@ function nav(){
    :[["home","🏠","الرئيسية"],["hist","☰","السجل"],["me","👤","بياناتي"],["out","⎋","خروج"]];
   const n=document.getElementById("nav");n.hidden=false;
   n.innerHTML=items.map(([k,i,l])=>`<button class="${page==k?"on":""}" onclick="${k=="out"?"logout()":`go('${k}')`}"><i>${i}</i>${l}${o&&k=="pay"&&pendN?`<span class="dot">${pendN}</span>`:""}</button>`).join("");
+function loginView(){
+  document.getElementById("nav").hidden=true;
+  app.innerHTML=`<div class="card login"><div class="pad">
+  <h1 style="margin:0">مريس</h1><p class="mut" style="margin-top:2px">إدارة الأراضي الزراعية</p>
+  <h2>تسجيل الدخول</h2><p class="mut">الحسابات يصدرها المالك فقط. إن لم يكن لديك حساب، تواصل مع المالك.</p>
+  <label>اسم المستخدم</label><input id="u" autocomplete="username" autocapitalize="none">
+  <label>كلمة المرور</label><input id="p" type="password" autocomplete="current-password">
+  <div class="err" id="err"></div>
+  <button class="btn full" onclick="doLogin()">دخول</button>
+  <div class="card pad chips" style="margin:14px 0 0;background:var(--in)"><div class="mut">حسابات للتجربة (اضغط للتعبئة)</div>
+  <button class="btn sm ghost" onclick="fill('admin','admin123')">المالك (admin)</button>
+  <button class="btn sm ghost" onclick="fill('ahmed','1234')">المستأجر أحمد (ahmed)</button>
+  <button class="btn sm ghost" onclick="fill('salem','1234')">المستأجر سالم (salem)</button></div>
+  </div></div>`;
 }
+function fill(u,p){document.getElementById("u").value=u;document.getElementById("p").value=p}
+function doLogin(){
+  const u=document.getElementById("u").value.trim().toLowerCase(),p=document.getElementById("p").value;
+  if(u==S.admin.user&&p==S.admin.pass)user={role:"owner"};
+  else{
+    const t=S.tenants.find(t=>t.user==u&&t.pass==p&&t.on);
+    if(t)user={role:"tenant",id:t.id};
+    else{
+      const obs=(S.observers||[]).find(o=>o.username.toLowerCase()==u&&o.pass==p);
+      if(obs)user={role:"viewer",id:obs.id,username:obs.username,cropFilter:obs.cropFilter};
+    }
+  }
+  if(!user){document.getElementById("err").textContent="اسم المستخدم أو كلمة المرور غير صحيحة.";return}
+  page="home";render();
+}
+
+function logout(){user=null;render()}
+function go(p){EW=null;page=p;render();window.scrollTo(0,0)}
+
+function nav(){
+  const o=user.role=="owner";
+  const pendN=S.payments.filter(p=>p.st=="p").length;
+  const items=o?[["home","🏠","الرئيسية"],["tenants","👥","المستأجرون"],["sales","🛒","المبيعات"],["pay","💳","المدفوعات"],["rates","⚙","الإعدادات"],["rep","📊","التقارير"]]
+   :[["home","🏠","الرئيسية"],["hist","☰","السجل"],["me","👤","بياناتي"],["out","⎋","خروج"]];
+  const n=document.getElementById("nav");n.hidden=false;
+  n.innerHTML=items.map(([k,i,l])=>`<button class="${page==k?"on":""}" onclick="${k=="out"?"logout()":`go('${k}')`}"><i>${i}</i>${l}${o&&k=="pay"&&pendN?`<span class="dot">${pendN}</span>`:""}</button>`).join("");
+  }
 function render(){
   if(!user)return loginView();
   nav();
-  (user.role=="owner"?ownerPage:tenantPage)();
-  app.insertAdjacentHTML("afterbegin",`<div class="top noprint"><span class="mut">${user.role=="owner"?"المالك":esc(T(user.id).name)}</span><button class="btn sm ghost" onclick="logout()">تسجيل الخروج ⎋</button></div>`);
+  
+  if(user.role=="viewer"){
+    viewerPage();
+  } else {
+    (user.role=="owner"?ownerPage:tenantPage)();
+  }
+  
+  let roleTitle = "المالك";
+  if(user.role=="viewer") roleTitle = `مراقب (${user.cropFilter || 'عام'})`;
+  else if(user.role=="tenant") roleTitle = esc(T(user.id).name);
+
+  app.insertAdjacentHTML("afterbegin",`<div class="top noprint"><span class="mut">${roleTitle}</span><button class="btn sm ghost" onclick="logout()">تسجيل الخروج ⎋</button></div>`);
+}
+
+/* ---------- Viewer (Observer) Page ---------- */
+function viewerPage(){
+  const allowedSales = getAllowedSales();
+  const totalSalesVal = allowedSales.reduce((sum, s) => sum + (s.total || s.val || 0), 0);
+  
+  app.innerHTML=`
+  <div class="card hero"><div class="ico">👁️</div><div><h2>لوحة مراقبة ${user.cropFilter || 'المحاصيل'}</h2><p>صلاحية قراءة ومراقبة مخصصة</p></div></div>
+
+  <div class="card">
+    <div class="head">إجمالي مبيعات ${user.cropFilter} المعتمدة</div>
+    <div class="pad">
+      <h3>${fmt(totalSalesVal)} ريال</h3>
+      <p class="mut">يتم عرض العمليات الخاصة بـ (${user.cropFilter}) فقط بناءً على صلاحيات الحساب.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="head">سجل المبيعات المسموح بها</div>
+    <div class="pad">
+      <div class="scroll">
+        <table>
+          <tr><th>التاريخ</th><th>المستأجر</th><th>المحصول</th><th>المبلغ</th></tr>
+          ${allowedSales.map(s => `<tr><td>${esc(s.date)}</td><td>${esc(s.tenantName || '-')}</td><td>${esc(s.crop || '-')}</td><td>${fmt(s.total || s.val || 0)}</td></tr>`).join("") || '<tr><td colspan="4" class="empty">لا توجد مبيعات مطابقة للصلاحية بعد.</td></tr>'}
+        </table>
+      </div>
+    </div>
+  </div>`;
 }
 
 /* ---------- Owner ---------- */
@@ -199,8 +287,8 @@ function oHome(){
 function tenantTable(){
   const now=today();
   return `<div class="scroll"><table><tr><th>المستأجر</th><th>الأرض</th><th>المبيعات</th><th>المورّد</th></tr>
-  ${S.tenants.map(t=>{const c=calc(t);return`<tr><td>${esc(t.name)}</td><td>${esc(t.land)}</td><td>${fmt(c.sales)}</td><td>${fmt(c.paid)}</td></tr>`}).join("")}</table></div>`;
-}
+  ${S.tenants.map(t=>{const c=calc(t);return`<tr><td>${esc(t.name)}</td><td>${esc(t.land)}</td><td>${fmt(c.sales)}</td><td>${fmt(c.paid)}</td></tr>`}).join("")}</table></}
+  }
 function oTenants(){
   app.innerHTML=`<div class="card"><div class="head">إضافة مستأجر جديد</div><div class="pad">
   <label>الاسم</label><input id="n"><label>الأرض</label><input id="l" placeholder="أرض رقم 004 - الجبارة - مريس">
@@ -290,12 +378,13 @@ function getAllowedSales() {
 }
 
 // --- 2. واجهة لوحة التحكم الشاملة للمالك ---
+// --- واجهة لوحة التحكم الشاملة للمالك ---
 function oAdmin(){
   app.innerHTML = `
     <div class="card">
       <div class="head">لوحة التحكم الشاملة والتحكم بالنظام</div>
       <div class="pad">
-        <p class="mut">مرحباً بك يا صاحب الصلاحية المطلقة. من هنا يمكنك التحكم بكل تفاصيل النظام، البيانات، والألوان.</p>
+        <p class="mut">مرحباً بك يا صاحب الصلاحية المطلقة. من هنا يمكنك التحكم بكل تفاصيل النظام، البيانات، والألوان، وإدارة حسابات المراقبين.</p>
         
         <hr style="margin: 15px 0; border:0; border-top:1px solid #eee;">
         
@@ -304,6 +393,39 @@ function oAdmin(){
         <div class="row">
           <input type="color" id="appColor" value="${S.themeColor || '#2563eb'}" style="height:40px; padding:0; cursor:pointer;">
           <button class="btn" onclick="saveThemeColor()">حفظ اللون</button>
+        </div>
+
+        <hr style="margin: 15px 0; border:0; border-top:1px solid #eee;">
+        
+        <h3>إدارة حسابات المراقبين (المشاهدين)</h3>
+        <p class="mut" style="font-size: 13px;">أضف حسابات لأخيك أو أختك مع تحديد المحصول المسموح بمراقبته (مثل القات فقط).</p>
+        
+        <div id="observersList" style="margin-bottom: 15px;">
+          ${(S.observers || []).map(obs => `
+            <div style="background: #f9fafb; padding: 10px; border-radius: 6px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; border: 1px solid #e5e7eb;">
+              <div>
+                <b>اسم المستخدم:</b> ${esc(obs.username)}<br>
+                <small class="mut">الصلاحية: ${obs.cropFilter === 'قات' ? 'مراقبة القات فقط' : 'الكل'} (${obs.role || 'viewer'})</small>
+              </div>
+              <button class="btn sm red" onclick="delObserver('${obs.id}')">حذف</button>
+            </div>
+          `).join("") || '<div class="empty">لا توجد حسابات مراقبين مضافة حتى الآن.</div>'}
+        </div>
+
+        <div style="background: #fdfdfd; padding: 12px; border: 1px solid #ddd; border-radius: 8px;">
+          <label>اسم المستخدم (اليوزرنيم)</label>
+          <input id="obsUser" placeholder="مثلاً: ali_viewer">
+          
+          <label>كلمة المرور</label>
+          <input id="obsPass" type="password" placeholder="كلمة المرور الخاصة به">
+          
+          <label>صلاحية المحصول</label>
+          <select id="obsCrop" style="width:100%; padding:10px; margin-bottom:10px; border:1px solid #ccc; border-radius:6px;">
+            <option value="قات">القات فقط (حجب البن)</option>
+            <option value="all">كل المحاصيل</option>
+          </select>
+          
+          <button class="btn full" onclick="addObserver()">إضافة حساب المراقب</button>
         </div>
 
         <hr style="margin: 15px 0; border:0; border-top:1px solid #eee;">
@@ -317,6 +439,40 @@ function oAdmin(){
   `;
 }
 
+// دالة إضافة مراقب جديد من لوحة التحكم
+function addObserver(){
+  const username = document.getElementById("obsUser").value.trim();
+  const pass = document.getElementById("obsPass").value.trim();
+  const cropFilter = document.getElementById("obsCrop").value;
+  
+  if(!username || !pass) {
+    alert("الرجاء إدخال اسم المستخدم وكلمة المرور.");
+    return;
+  }
+  
+  if(!S.observers) S.observers = [];
+  
+  S.observers.push({
+    id: uid(),
+    username,
+    pass,
+    role: 'viewer',
+    cropFilter: cropFilter === 'قات' ? 'قات' : ''
+  });
+  
+  save();
+  oAdmin(); // تحديث واجهة لوحة التحكم فوراً ليعرض الحساب الجديد
+  alert("تمت إضافة حساب المراقب بنجاح.");
+}
+
+// دالة حذف مراقب من لوحة التحكم
+function delObserver(id){
+  if(confirm("هل أنت متأكد من حذف هذا الحساب؟")) {
+    S.observers = (S.observers || []).filter(o => o.id != id);
+    save();
+    oAdmin();
+  }
+ }
 // دالة حفظ لون التطبيق
 function saveThemeColor(){
   const color = document.getElementById("appColor").value;
