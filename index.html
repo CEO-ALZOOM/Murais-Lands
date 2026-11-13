@@ -205,7 +205,9 @@ function doLogin(){
 function logout(){
   user=null;closeM();
   const n=document.getElementById("nav");n.innerHTML="";n.hidden=true;
-  render();window.scrollTo(0,0);
+  render();
+  checkSupabaseConnection();
+  window.scrollTo(0,0);
 }
 function go(p){EW=null;page=p;render();window.scrollTo(0,0)}
 
