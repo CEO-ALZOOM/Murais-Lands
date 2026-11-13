@@ -210,12 +210,36 @@ function oTenants(){
   <div class="card"><div class="pad top"><h3>الحسابات</h3></div><div class="scroll"><table><tr><th>الاسم</th><th>المستخدم</th><th>النسبة %</th><th></th></tr>
   ${S.tenants.map(t=>`<tr><td>${esc(t.name)}</td><td>${esc(t.user)}</td><td><input type="number" value="${t.share}" style="width:72px;padding:6px" onchange="setShare('${t.id}',this.value)"></td><td><button class="btn sm red" onclick="delTenant('${t.id}')">حذف</button></td></tr>`).join("")||`<tr><td colspan=4 class="empty">لا يوجد مستأجرون. أضف أول مستأجر من النموذج أعلاه.</td></tr>`}</table></div></div>`;
 }
-function addTenant(){
+async function addTenant(){
   const v=id=>document.getElementById(id).value.trim(),e=document.getElementById("err");
   if(!v("n")||!v("l")||!v("u")||!v("p"))return e.textContent="أكمل الاسم والأرض واسم المستخدم وكلمة المرور.";
   if(S.tenants.some(t=>t.user==v("u").toLowerCase())||v("u")==S.admin.user)return e.textContent="اسم المستخدم مستخدم من قبل، اختر اسماً آخر.";
-  S.tenants.push({id:uid(),name:v("n"),land:v("l"),user:v("u").toLowerCase(),pass:v("p"),share:+v("s")||25,on:1});
-  save();render();
+  
+  const newTenant = {
+    id: uid(),
+    name: v("n"),
+    land: v("l"),
+    user: v("u").toLowerCase(),
+    pass: v("p"),
+    share: +v("s")||25,
+    on: 1
+  };
+
+  // إرسال البيانات مباشرة إلى جدول Supabase
+  const { error } = await _supabase.from('lands').insert([{
+    title: newTenant.land,
+    price: 0
+  }]);
+
+  if(error) {
+    console.error('خطأ في مزامنة Supabase:', error);
+  }
+
+  S.tenants.push(newTenant);
+  save();
+  render();
+}
+
 }
 function setShare(id,v){const t=S.tenants.find(x=>x.id==id);if(t&&+v>=0){t.share=+v;save()}}
 function delTenant(id){
