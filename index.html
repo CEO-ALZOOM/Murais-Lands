@@ -638,6 +638,7 @@ function modal(h){
 }
 function closeM(){const o=document.getElementById("md");if(o)o.remove()}
 
+syncSeedToCloud();
 render();
 load().then(()=>{if(!user)render();});
 </script>
