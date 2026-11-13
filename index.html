@@ -263,7 +263,13 @@ async function setPay(id, st){
   render();
 }
 function oRates(){
-  app.innerHTML=`<div class="card"><div class="head">أسعار الصرف</div><div class="pad">
+  app.innerHTML=`
+  <div class="card" style="margin-bottom: 15px;">
+    <div class="pad">
+      <button class="btn full" style="background: var(--primary, #2563eb); color: #fff; font-weight: bold;" onclick="oAdmin()">⚙️ فتح لوحة التحكم الشاملة والألوان</button>
+    </div>
+  </div>
+  <div class="card"><div class="head">أسعار الصرف</div><div class="pad">
   <label>الدولار الواحد = كم ريال يمني</label><input id="usd" type="number" value="${S.rates.usd}">
   <label>الريال السعودي الواحد = كم ريال يمني</label><input id="sar" type="number" value="${S.rates.sar}">
   <button class="btn full" onclick="saveRates()">حفظ الأسعار</button><div class="mut" style="margin-top:10px" id="ok"></div></div></div>
@@ -275,6 +281,62 @@ function saveRates(){
   if(!(u>0&&s>0))return document.getElementById("ok").textContent="أدخل سعرين أكبر من صفر.";
   S.rates={usd:u,sar:s};save();document.getElementById("ok").textContent="تم حفظ الأسعار.";
 }
+// --- 1. دالة تصفية المحاصيل حسب صلاحية المراقب ---
+function getAllowedSales() {
+  if (user && user.role === 'viewer' && user.cropFilter) {
+    return S.sales.filter(s => s.crop && s.crop.includes(user.cropFilter));
+  }
+  return S.sales; // المالك يرى كل شيء
+}
+
+// --- 2. واجهة لوحة التحكم الشاملة للمالك ---
+function oAdmin(){
+  app.innerHTML = `
+    <div class="card">
+      <div class="head">لوحة التحكم الشاملة والتحكم بالنظام</div>
+      <div class="pad">
+        <p class="mut">مرحباً بك يا صاحب الصلاحية المطلقة. من هنا يمكنك التحكم بكل تفاصيل النظام، البيانات، والألوان.</p>
+        
+        <hr style="margin: 15px 0; border:0; border-top:1px solid #eee;">
+        
+        <h3>إدارة المظهر والألوان</h3>
+        <label>لون الهوية الأساسي للتطبيق</label>
+        <div class="row">
+          <input type="color" id="appColor" value="${S.themeColor || '#2563eb'}" style="height:40px; padding:0; cursor:pointer;">
+          <button class="btn" onclick="saveThemeColor()">حفظ اللون</button>
+        </div>
+
+        <hr style="margin: 15px 0; border:0; border-top:1px solid #eee;">
+        
+        <h3>النسخ الاحتياطي وقاعدة البيانات</h3>
+        <div class="row" style="margin-top:10px;">
+          <button class="btn ghost full" onclick="exportDataBackup()">تصدير نسخة احتياطية (JSON)</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// دالة حفظ لون التطبيق
+function saveThemeColor(){
+  const color = document.getElementById("appColor").value;
+  S.themeColor = color;
+  save();
+  document.documentElement.style.setProperty('--primary', color);
+  alert("تم تحديث لون النظام بنجاح.");
+}
+
+// دالة تصدير نسخة احتياطية
+function exportDataBackup(){
+  const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(S));
+  const downloadAnchor = document.createElement('a');
+  downloadAnchor.setAttribute("href", dataStr);
+  downloadAnchor.setAttribute("download", `murais_lands_backup_${today()}.json`);
+  document.body.appendChild(downloadAnchor);
+  downloadAnchor.click();
+  downloadAnchor.remove();
+}
+
 function addWallet(){const v=id=>document.getElementById(id).value.trim();if(!v("wn")||!v("wp"))return document.getElementById("wer").textContent="أدخل اسم المحفظة ورقمها.";
   if(EW){const w=S.wallets.find(x=>x.id==EW);if(w){w.name=v("wn");w.holder=v("wh");w.phone=v("wp")}EW=null}else S.wallets.push({id:uid(),name:v("wn"),holder:v("wh"),phone:v("wp")});save();render()}
 let EW=null;
