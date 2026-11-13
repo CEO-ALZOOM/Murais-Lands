@@ -239,8 +239,6 @@ async function addTenant(){
   save();
   render();
 }
-
-}
 function setShare(id,v){const t=S.tenants.find(x=>x.id==id);if(t&&+v>=0){t.share=+v;save()}}
 function delTenant(id){
   if(!confirm("حذف المستأجر مع كل مبيعاته ومدفوعاته؟"))return;
