@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>نظام الأراضي الزراعية</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 :root{--bg:#f3f5f4;--card:#fff;--ink:#16221b;--mut:#6b7a72;--g:#2a4a3a;--g2:#3f6e50;--line:#dfe5e1;--sand:#faf0e1;--sandi:#d99a3a;--mint:#e6f1e9;--sky:#e7ecf8;--red:#f7e1df;--redi:#a8321f;--in:#f3f5f4}
 @media (prefers-color-scheme:dark){:root{--bg:#121a16;--card:#1b2620;--ink:#e8efe9;--mut:#9aaaa1;--g:#173226;--g2:#5fa079;--line:#2c3a33;--sand:#33291a;--mint:#1f3328;--sky:#1e2638;--red:#3a1f1c;--redi:#ff9b8a;--in:#232f28}}
@@ -259,11 +260,50 @@ function oRep(){
   const M={},mo=k=>M[k]=M[k]||{s:0,sh:0,c:0};
   S.sales.forEach(x=>{const m=mo(ym(x.sale_date));m.s+=N(x.amount);m.sh+=N(x.amount)*N(T(x.tenant_id).share)/100});
   S.payments.filter(p=>p.status==='c').forEach(p=>{mo(ym(p.pay_date)).c+=N(p.amount)});
-  app.innerHTML=`<div class="card pad"><h3 style="margin-top:0">المبيعات والتحصيل حسب الشهر</h3><div class="scroll"><table><tr><th>الشهر</th><th>المبيعات</th><th>حصتك</th><th>المحصّل</th></tr>
+  app.innerHTML=`<div class="card pad"><h3 style="margin-top:0">كشف الحساب (Excel)</h3>
+  <div class="row"><div><label>من تاريخ</label><input id="xf" type="date" value="${today().slice(0,8)}01"></div><div><label>إلى تاريخ</label><input id="xt" type="date" value="${today()}"></div></div>
+  <label>المستأجر</label><select id="xs"><option value="">كل المستأجرين</option>${S.tenants.map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select>
+  <label>سعر الصرف</label><select id="xm"><option value="sys">سعر النظام الحالي</option><option value="day">سعر يوم العملية</option></select>
+  <div class="err" id="xe"></div><button class="btn full" onclick="exportXls()">تصدير Excel</button></div>
+  <div class="card pad"><h3 style="margin-top:0">المبيعات والتحصيل حسب الشهر</h3><div class="scroll"><table><tr><th>الشهر</th><th>المبيعات</th><th>حصتك</th><th>المحصّل</th></tr>
   ${Object.keys(M).sort().reverse().map(k=>`<tr><td>${k}</td><td>${fmt(M[k].s)}</td><td>${fmt(M[k].sh)}</td><td>${fmt(M[k].c)}</td></tr>`).join('')||'<tr><td colspan="4" class="empty">لا توجد بيانات.</td></tr>'}</table></div></div>
   <div class="card pad"><h3 style="margin-top:0">كشف حساب لكل مستأجر</h3><div class="scroll"><table><tr><th>المستأجر</th><th>الأرض</th><th>النسبة</th><th>المبيعات</th><th>نصيبك</th><th>المحصّل</th><th>المتبقي</th></tr>
   ${S.tenants.map(t=>{const c=calc(t);return`<tr><td><b>${esc(t.name)}</b></td><td>${esc(t.land)}</td><td>${t.share}%</td><td>${fmt(c.sales)}</td><td>${fmt(c.owed)}</td><td>${fmt(c.paid)}</td><td>${fmt(c.left)}</td></tr>`}).join('')}</table></div>
   <button class="btn sm ghost noprint" style="margin-top:12px" onclick="window.print()">طباعة</button></div>`;
+}
+
+function exportXls(){
+  const g=k=>$(k).value,e=$('xe'),f=g('xf'),t=g('xt'),tid=g('xs'),day=g('xm')==='day';
+  if(!f||!t||f>t)return e.textContent='حدد تاريخ بداية ونهاية صحيحين.';
+  if(!window.XLSX)return e.textContent='تعذّر تحميل مكتبة Excel، تأكد من الاتصال بالإنترنت.';
+  const R=o=>day&&o.rate?o.rate:S.set,r2=n=>Math.round(n*100)/100;
+  const usd=(o,v)=>N(v)/N(R(o).usd),sar=(o,v)=>N(v)/N(R(o).sar),sum=(a,fn)=>r2(a.reduce((s,x)=>s+fn(x),0));
+  const ts=S.tenants.filter(x=>!tid||x.id===tid),ids=ts.map(x=>x.id),inR=d=>d>=f&&d<=t,sm=sStat();
+  const sl=S.sales.filter(x=>ids.includes(x.tenant_id)&&inR(x.sale_date)).sort((a,b)=>a.sale_date.localeCompare(b.sale_date));
+  const pm=S.payments.filter(p=>ids.includes(p.tenant_id)&&inR(p.pay_date)&&p.status==='c');
+  const shr=x=>N(x.amount)*N(T(x.tenant_id).share)/100;
+  const S1=sum(sl,x=>N(x.amount)),H1=sum(sl,shr),C1=sum(pm,p=>N(p.amount));
+  const S2=sum(sl,x=>usd(x,x.amount)),H2=sum(sl,x=>usd(x,shr(x))),C2=sum(pm,p=>usd(p,p.amount));
+  const S3=sum(sl,x=>sar(x,x.amount)),H3=sum(sl,x=>sar(x,shr(x))),C3=sum(pm,p=>sar(p,p.amount));
+  const A=[['المستأجر','الأرض','النسبة %','المبيعات','نصيبك','المحصّل','المتبقي']];
+  ts.forEach(x=>{const s=sum(sl.filter(y=>y.tenant_id===x.id),y=>N(y.amount)),c=sum(pm.filter(p=>p.tenant_id===x.id),p=>N(p.amount)),sh=sum(sl.filter(y=>y.tenant_id===x.id),shr);A.push([x.name,x.land,N(x.share),s,sh,c,r2(sh-c)])});
+  A.push(['الإجمالي','','',S1,H1,C1,r2(H1-C1)],[],['الإجمالي بالعملات','المبيعات','نصيبك','المحصّل','المتبقي'],
+    ['ريال يمني',S1,H1,C1,r2(H1-C1)],['دولار',S2,H2,C2,r2(H2-C2)],['ريال سعودي',S3,H3,C3,r2(H3-C3)],
+    ['سعر الصرف المعتمد',day?'سعر يوم العملية لكل بيع وتحويل':`دولار = ${S.set.usd} ريال يمني، ريال سعودي = ${S.set.sar} ريال يمني (سعر النظام)`]);
+  const L={y:'مرفوع',h:'جزئي',n:'غير مرفوع'};
+  const B=[['التاريخ','المستأجر','المحصول','الكمية','المبلغ (ريال يمني)','نسبتك (ريال يمني)','المبلغ بالدولار','المبلغ بالريال السعودي','السند']]
+    .concat(sl.map(x=>[x.sale_date,T(x.tenant_id).name,x.crop,x.qty||'',N(x.amount),r2(shr(x)),r2(usd(x,x.amount)),r2(sar(x,x.amount)),L[sm[x.id]]||'']),[['الإجمالي','','','',S1,H1,S2,S3,'']]);
+  const D=[['التاريخ','المستأجر','المبلغ (ريال يمني)','المحفظة','رقم العملية','سعر الدولار','سعر الريال السعودي','بالدولار','بالريال السعودي']]
+    .concat(pm.map(p=>[p.pay_date,T(p.tenant_id).name,N(p.amount),p.wallet||'',p.ref||'',N(R(p).usd),N(R(p).sar),r2(usd(p,p.amount)),r2(sar(p,p.amount))]),[['الإجمالي','',C1,'','','','',C2,C3]]);
+  try{
+    const wb=XLSX.utils.book_new();
+    [['كشف الحساب',A],['المبيعات',B],['المدفوعات',D]].forEach(([n,r])=>XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(r),n));
+    wb.Workbook={Views:[{RTL:true}]};
+    const blob=new Blob([XLSX.write(wb,{bookType:'xlsx',type:'array'})],{type:'application/octet-stream'});
+    const url=URL.createObjectURL(blob),a=document.createElement('a');
+    a.href=url;a.download=`statement-${f}_${t}.xlsx`;document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),2000);e.textContent='';
+  }catch(x){e.textContent='تعذّر حفظ الملف.'}
 }
 
 /* الإعدادات والمحافظ */
