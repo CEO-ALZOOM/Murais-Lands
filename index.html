@@ -411,8 +411,10 @@ const delObs=id=>modal(`<h3 style="margin-top:0">حذف المراقب؟</h3><bu
 async function doDelObs(id){try{await api({action:'delete_user',user_id:id});closeM();await refresh()}catch(x){modal(`<p class="st-r">${esc(x.message)}</p>`)}}
 async function saveColor(){if(await setS({theme_color:$('appColor').value})){document.documentElement.style.setProperty('--g',S.set.theme_color);modal('<p>تم تحديث اللون ✓</p>')}}
 function exportBackup(){
-  const a=document.createElement('a');a.href='data:text/json;charset=utf-8,'+encodeURIComponent(JSON.stringify({tenants:S.tenants,sales:S.sales,payments:S.payments.map(p=>({...p,img:undefined})),wallets:S.wallets,settings:S.set}));
-  a.download=`backup_${today()}.json`;document.body.appendChild(a);a.click();a.remove();
+  const d=JSON.stringify({exported:today(),tenants:S.tenants,profiles:S.profiles,sales:S.sales,payments:S.payments.map(p=>({...p,img:p.img&&p.img.startsWith('data:')?'(inline)':p.img})),wallets:S.wallets,settings:S.set},null,1);
+  const blob=new Blob([d],{type:'application/octet-stream'}),url=URL.createObjectURL(blob),a=document.createElement('a');
+  a.href=url;a.download=`backup_${today()}.json`;document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),2000);
 }
 
 /* ---------- المستأجر ---------- */
