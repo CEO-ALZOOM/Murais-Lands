@@ -227,6 +227,7 @@ async function addTenant(){
 const delTenant=id=>modal(`<h3 style="margin-top:0">حذف المستأجر؟</h3><p class="mut">سيُحذف مع كل مبيعاته ومدفوعاته وحساب دخوله.</p><button class="btn full red" onclick="doDel('${id}')">نعم، احذف</button>`);
 async function doDel(id){
   const t=S.tenants.find(x=>x.id===id);
+  try{const{data:fl}=await sb.storage.from('receipts').list(id,{limit:1000});if(fl&&fl.length)await sb.storage.from('receipts').remove(fl.map(f=>id+'/'+f.name))}catch(e){}
   if(!await ok(sb.from('tenants').delete().eq('id',id)))return;
   if(t&&t.user_id){try{await api({action:'delete_user',user_id:t.user_id})}catch(e){}}
   closeM();await refresh();
@@ -272,10 +273,12 @@ function oPay(){
   ${rows.map(x=>`<tr><td>${x.pay_date}</td><td>${esc(T(x.tenant_id).name)}<div class="mut">${esc(x.wallet||'')} ${x.ref?'- رقم '+esc(x.ref):''}</div>${x.img?`<button class="btn sm ghost" onclick="showImg('${x.id}')">عرض السند</button>`:''}</td><td>${fmt(x.amount)}</td><td>${badge(x.status)}</td><td>${x.status==='p'?`<button class="btn sm" onclick="setPay('${x.id}','c')">تأكيد</button> <button class="btn sm red" onclick="setPay('${x.id}','r')">رفض</button>`:''}</td></tr>`).join('')||'<tr><td colspan="5" class="empty">لا توجد دفعات بعد.</td></tr>'}</table></div></div>`;
 }
 async function setPay(id,st){if(await ok(sb.from('payments').update({status:st}).eq('id',id)))await refresh()}
-function showImg(id){
+async function showImg(id){
   const x=S.payments.find(p=>p.id===id);if(!x||!x.img)return;
+  let src=x.img;
+  if(!src.startsWith('data:')){const{data,error}=await sb.storage.from('receipts').createSignedUrl(src,300);if(error)return modal(`<p class="st-r">تعذّر فتح السند: ${esc(error.message)}</p>`);src=data.signedUrl}
   const o=document.createElement('div');o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:40;display:grid;place-items:center;padding:16px';
-  o.innerHTML=`<img src="${x.img}" style="max-width:100%;max-height:85vh;border-radius:12px">`;o.onclick=()=>o.remove();document.body.appendChild(o);
+  o.innerHTML=`<img src="${src}" style="max-width:100%;max-height:85vh;border-radius:12px">`;o.onclick=()=>o.remove();document.body.appendChild(o);
 }
 
 /* التقارير */
@@ -362,12 +365,16 @@ async function delWallet(id){if(await ok(sb.from('wallets').delete().eq('id',id)
 
 /* لوحة التحكم */
 function oAdmin(){
-  const obs=S.profiles.filter(p=>p.role==='viewer');
+  const obs=S.profiles.filter(p=>p.role==='viewer'),own=S.profiles.filter(p=>p.role==='owner');
   app.innerHTML=`<div class="card"><div class="head">لوحة التحكم</div><div class="pad">
   <button class="btn sm ghost" onclick="go('rates')">← رجوع للإعدادات</button>
   <h3>كلمات مرور المستأجرين</h3><p class="mut">اكتب كلمة مرور جديدة (6 أحرف فأكثر) ثم احفظ.</p>
   <div class="scroll"><table><tr><th>المستأجر</th><th>المستخدم</th><th>كلمة جديدة</th><th></th></tr>
   ${S.tenants.map(t=>`<tr><td><b>${esc(t.name)}</b></td><td>${esc(uname(t))}</td><td><input type="text" id="pass_${t.id}" style="width:120px;padding:6px"></td><td><button class="btn sm" onclick="setPass('${t.id}')">حفظ</button></td></tr>`).join('')}</table></div>
+  <h3>حسابات الأدمن</h3><p class="mut">صلاحياتهم مثل صلاحياتك بالكامل.</p>
+  ${own.map(o=>`<div class="wal"><b>${esc(o.username)}${o.id===me.id?' <span class="badge">أنت</span>':''}</b><div class="row" style="margin-top:8px"><input type="text" id="po_${o.id}" placeholder="كلمة مرور جديدة (6+)"><button class="btn sm" onclick="setPassU('${o.id}','po_${o.id}')">حفظ</button></div>${o.id===me.id?'':`<button class="btn sm red" style="margin-top:8px" onclick="delOwner('${o.id}')">حذف</button>`}</div>`).join('')}
+  <label>اسم المستخدم (إنجليزي)</label><input id="ownUser" autocapitalize="none"><label>كلمة المرور (6+)</label><input id="ownPass" type="password">
+  <div class="err" id="owerr"></div><button class="btn full" onclick="addOwner()">إضافة أدمن</button>
   <h3>حسابات المراقبين</h3><p class="mut">صلاحية قراءة فقط لمحصول معيّن.</p>
   ${obs.map(o=>`<div class="wal"><b>${esc(o.username)}</b><div class="mut">${o.crop_filter?'مراقبة '+esc(o.crop_filter)+' فقط':'كل المحاصيل'}</div><button class="btn sm red" onclick="delObs('${o.id}')">حذف</button></div>`).join('')||'<div class="empty">لا توجد حسابات مراقبين.</div>'}
   <label>اسم المستخدم (إنجليزي)</label><input id="obsUser" autocapitalize="none"><label>كلمة المرور (6+)</label><input id="obsPass" type="password">
@@ -381,6 +388,18 @@ async function setPass(id){
   if(!t||!t.user_id)return;if(v.length<6)return modal('<p>كلمة المرور 6 أحرف على الأقل.</p>');
   try{await api({action:'set_password',user_id:t.user_id,password:v});$('pass_'+id).value='';modal(`<p>تم تحديث كلمة مرور ${esc(t.name)} ✓</p>`)}catch(x){modal(`<p class="st-r">${esc(x.message)}</p>`)}
 }
+async function setPassU(uid,inp){
+  const v=$(inp).value.trim();if(v.length<6)return modal('<p>كلمة المرور 6 أحرف على الأقل.</p>');
+  try{await api({action:'set_password',user_id:uid,password:v});$(inp).value='';modal('<p>تم تحديث كلمة المرور ✓</p>')}catch(x){modal(`<p class="st-r">${esc(x.message)}</p>`)}
+}
+async function addOwner(){
+  const u=$('ownUser').value.trim(),p=$('ownPass').value,e=$('owerr');
+  if(!/^[a-z0-9._-]+$/i.test(u))return e.textContent='اسم المستخدم بالإنجليزية وأرقام فقط.';
+  if(p.length<6)return e.textContent='كلمة المرور 6 أحرف على الأقل.';
+  e.textContent='جارٍ الإنشاء...';
+  try{await api({action:'create_owner',username:u,password:p});await refresh()}catch(x){e.textContent=x.message}
+}
+const delOwner=id=>modal(`<h3 style="margin-top:0">حذف الأدمن؟</h3><button class="btn full red" onclick="doDelObs('${id}')">نعم، احذف</button>`);
 async function addObs(){
   const u=$('obsUser').value.trim(),p=$('obsPass').value,c=$('obsCrop').value,e=$('oerr');
   if(!/^[a-z0-9._-]+$/i.test(u))return e.textContent='اسم المستخدم بالإنجليزية وأرقام فقط.';
@@ -442,7 +461,7 @@ function copyW(id,b){
 }
 function shrink(f,okf,bad){
   const r=new FileReader();r.onerror=bad;
-  r.onload=()=>{const im=new Image();im.onerror=bad;im.onload=()=>{const k=Math.min(1,900/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=im.width*k;c.height=im.height*k;c.getContext('2d').drawImage(im,0,0,c.width,c.height);okf(c.toDataURL('image/jpeg',.6))};im.src=r.result};r.readAsDataURL(f);
+  r.onload=()=>{const im=new Image();im.onerror=bad;im.onload=()=>{const k=Math.min(1,1600/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=im.width*k;c.height=im.height*k;c.getContext('2d').drawImage(im,0,0,c.width,c.height);c.toBlob(b=>b?okf(b):bad(),'image/jpeg',.75)};im.src=r.result};r.readAsDataURL(f);
 }
 function sendPay(){
   const e=$('perr'),a=+$('pa').value,ref=$('pr2').value.trim(),f=$('pf').files[0],w=S.wallets.find(x=>x.id===$('pw').value),t=mt();
@@ -450,10 +469,13 @@ function sendPay(){
   if(!w)return e.textContent='لا توجد محفظة للتحويل إليها. تواصل مع المالك.';
   if(!f)return e.textContent='أرفق صورة السند أولاً.';
   e.textContent='جارٍ الإرسال...';
-  shrink(f,async img=>{
-    const p={tenant_id:t.id,amount:a,pay_date:today(),wallet:w.name,ref,img,status:'p',rate:{usd:S.set.usd,sar:S.set.sar}};
-    if(!await ok(sb.from('payments').insert(p)))return;
-    LF=f;page='hist';await refresh();waAfter(p);
+  shrink(f,async blob=>{
+    const path=`${t.id}/${crypto.randomUUID()}.jpg`;
+    const up=await sb.storage.from('receipts').upload(path,blob,{contentType:'image/jpeg'});
+    if(up.error){e.textContent='تعذّر رفع الصورة: '+up.error.message;return}
+    const p={tenant_id:t.id,amount:a,pay_date:today(),wallet:w.name,ref,img:path,status:'p',rate:{usd:S.set.usd,sar:S.set.sar}};
+    if(!await ok(sb.from('payments').insert(p))){await sb.storage.from('receipts').remove([path]);return}
+    LF=new File([blob],'receipt.jpg',{type:'image/jpeg'});page='hist';await refresh();waAfter(p);
   },()=>{e.textContent='تعذّر قراءة الصورة، جرّب صورة أخرى.'});
 }
 function tMe(){
